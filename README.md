@@ -44,7 +44,14 @@ cd ghcsd
 go mod download
 ```
 
-3. Build the project:
+3. Build and install the project:
+```bash
+go install github.com/acazau/ghcsd/cmd/server@latest
+```
+
+   This will install the `ghcsd` executable in your `$GOPATH/bin` directory (or `$HOME/go/bin` if you're using Go modules).
+
+   Alternatively, you can build the project directly:
 ```bash
 go build -o ghcsd cmd/server/main.go
 ```
