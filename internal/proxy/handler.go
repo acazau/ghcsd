@@ -56,13 +56,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.logRequest("Client Request", r)
 	}
 
+	// Normalize the path by trimming leading '/v1'
+	path := strings.TrimPrefix(r.URL.Path, "/v1")
+
 	// Handle health check endpoint
-	if r.Method == http.MethodGet && r.URL.Path == "/v1/health" {
+	if r.Method == http.MethodGet && path == "/health" {
 		h.handleHealth(w, r)
 		return
 	}
 
-	if r.Method != http.MethodPost || r.URL.Path != "/v1/chat/completions" {
+	if r.Method != http.MethodPost || path != "/chat/completions" {
 		h.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
