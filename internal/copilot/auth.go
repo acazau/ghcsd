@@ -59,14 +59,36 @@ func (a *AuthManager) GetCopilotToken() (string, error) {
 		if err != nil {
 			return "", err
 		}
-
-		return a.fetchNewToken(authToken)
 	} else {
 		a.debugLog("Found existing auth token (masked): %s...%s",
 			authToken[:5], authToken[len(authToken)-5:])
 	}
 
-	return authToken, nil
+	// Always exchange the auth token for a Copilot API token, regardless of whether it's new or existing
+	a.debugLog("Exchanging auth token for Copilot API token")
+	copilotToken, err := a.fetchNewToken(authToken)
+	if err != nil {
+		a.debugLog("Failed to get Copilot API token: %v", err)
+		
+		// If the token exchange fails, it might be because the auth token is expired
+		// Try to get a new token through the device code flow
+		a.debugLog("Auth token may be expired, starting new device code flow")
+		deviceCode, err := a.RequestDeviceCode()
+		if err != nil {
+			return "", fmt.Errorf("failed to request device code after token exchange failure: %w", err)
+		}
+
+		authToken, err = a.handleDeviceCodeFlow(deviceCode)
+		if err != nil {
+			return "", err
+		}
+		
+		// Try again with the new auth token
+		return a.fetchNewToken(authToken)
+	}
+
+	a.debugLog("Successfully obtained Copilot API token")
+	return copilotToken, nil
 }
 
 // LoadAuthToken loads the authentication token from the specified configuration directory
@@ -215,10 +237,9 @@ func (a *AuthManager) fetchNewToken(authToken string) (string, error) {
 	}
 
 	req.Header.Set("Authorization", fmt.Sprintf("token %s", authToken))
-	req.Header.Set("User-Agent", "GitHubCopilotChat/0.8.0")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Editor-Version", "vscode/1.83.1")
-	req.Header.Set("Editor-Plugin-Version", "copilot-chat/0.8.0")
+	req.Header.Set("Editor-Version", "vscode/0.1.0")
+	req.Header.Set("copilot-integration-id", "vscode-chat")
 
 	a.debugLog("Sending token request to GitHub API")
 	resp, err := a.client.Do(req)

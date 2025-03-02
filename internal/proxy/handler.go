@@ -21,24 +21,18 @@ type Handler struct {
 }
 
 func NewHandler(token string, defaultModel string, debug bool) (*Handler, error) {
-	// Validate default model
-	models := config.GetModels()
-	valid := false
-	for _, m := range models {
-		if m == defaultModel {
-			valid = true
-			break
-		}
-	}
+	// Validate default model using the new validation function
+	realModelID, valid := config.ValidateModel(defaultModel)
 	if !valid {
 		return nil, fmt.Errorf("invalid default model: %s", defaultModel)
 	}
 
-	client, err := copilot.NewClient(token, defaultModel, "")
+	client, err := copilot.NewClient(token, realModelID, "")
 	if err != nil {
 		return nil, err
 	}
 	client.SetDebug(debug)
+
 	return &Handler{
 		client:       client,
 		defaultModel: defaultModel,
@@ -88,25 +82,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate and use requested model if provided, otherwise use default
+	modelToUse := h.defaultModel
 	if req.Model != "" {
-		models := config.GetModels()
-		valid := false
-		for _, m := range models {
-			if m == req.Model {
-				valid = true
-				break
-			}
-		}
-		if !valid {
-			h.sendError(w, fmt.Sprintf("Invalid model requested: %s", req.Model), http.StatusBadRequest)
-			return
-		}
-	} else {
-		req.Model = h.defaultModel
+		modelToUse = req.Model
+	}
+
+	// Get the real model ID using our new validation function
+	realModelID, valid := config.ValidateModel(modelToUse)
+	if !valid {
+		h.sendError(w, fmt.Sprintf("Invalid model requested: %s", modelToUse), http.StatusBadRequest)
+		return
 	}
 
 	// Create a new client instance with the selected model
-	client, err := copilot.NewClient(h.client.GetToken(), req.Model, "")
+	client, err := copilot.NewClient(h.client.GetToken(), realModelID, "")
 	if err != nil {
 		h.sendError(w, "Failed to create client", http.StatusInternalServerError)
 		return
@@ -148,7 +137,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 	var buf bytes.Buffer
 	reader := io.TeeReader(responseBody, &buf)
-
 	_, err = io.Copy(rw, reader)
 	if err != nil {
 		if h.debug {
@@ -170,7 +158,6 @@ func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 		Status:  "ok",
 		Message: "Service is healthy",
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
@@ -180,11 +167,9 @@ func (h *Handler) sendError(w http.ResponseWriter, message string, status int) {
 	if h.debug {
 		h.logWithPrefix("Error", fmt.Sprintf("%d: %s", status, message))
 	}
-
 	response := ErrorResponse{
 		Message: message,
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(response)
@@ -218,7 +203,6 @@ func (h *Handler) logWithPrefix(prefix, message string) {
 	if !h.debug {
 		return
 	}
-
 	// Mask bearer tokens in the message
 	maskedMessage := message
 	if strings.Contains(message, "Bearer ") {
