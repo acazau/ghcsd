@@ -15,7 +15,7 @@ A HTTP server that proxies OpenAI-style API requests to GitHub Copilot by adding
 
 ## Prerequisites
 
-- Go 1.23.2 or later (for local build)
+- Go 1.24 or later (for local build)
 - GitHub Copilot subscription
 - Valid GitHub account
 - Docker (optional, for containerized deployment)
