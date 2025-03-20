@@ -10,14 +10,17 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/acazau/ghcsd/internal/config"
-	"github.com/acazau/ghcsd/internal/copilot"
+	"github.com/temp/ghcsd/internal/config"
+	"github.com/temp/ghcsd/internal/copilot"
+	"github.com/temp/ghcsd/internal/proxy/anthropic"
 )
 
 type Handler struct {
 	client       *copilot.Client
 	defaultModel string
 	debug        bool
+	// Add AnthropicHandler for /anthropic routes
+	anthropicHandler *anthropic.Handler
 }
 
 func NewHandler(token string, defaultModel string, debug bool) (*Handler, error) {
@@ -33,10 +36,17 @@ func NewHandler(token string, defaultModel string, debug bool) (*Handler, error)
 	}
 	client.SetDebug(debug)
 
+	// Create the Anthropic handler
+	anthropicHandler, err := anthropic.NewHandler(token, defaultModel, debug)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Anthropic handler: %w", err)
+	}
+
 	return &Handler{
-		client:       client,
-		defaultModel: defaultModel,
-		debug:        debug,
+		client:           client,
+		defaultModel:     defaultModel,
+		debug:            debug,
+		anthropicHandler: anthropicHandler,
 	}, nil
 }
 
@@ -48,6 +58,12 @@ type ErrorResponse struct {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.debug {
 		h.logRequest("Client Request", r)
+	}
+
+	// Check if the request is intended for the Anthropic API endpoint
+	if strings.HasPrefix(r.URL.Path, "/anthropic") {
+		h.anthropicHandler.ServeHTTP(w, r)
+		return
 	}
 
 	// Normalize the path by trimming leading '/v1'

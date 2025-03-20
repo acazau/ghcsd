@@ -35,7 +35,7 @@ The following models are supported:
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/acazau/ghcsd
+git clone https://github.com/temp/ghcsd
 cd ghcsd
 ```
 
@@ -46,7 +46,7 @@ go mod download
 
 3. Build and install the project:
 ```bash
-go install github.com/acazau/ghcsd/cmd/server@latest
+go install github.com/temp/ghcsd/cmd/server@latest
 ```
 
    This will install the `ghcsd` executable in your `$GOPATH/bin` directory (or `$HOME/go/bin` if you're using Go modules).
@@ -60,7 +60,7 @@ go build -o ghcsd cmd/server/main.go
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/acazau/ghcsd
+git clone https://github.com/temp/ghcsd
 cd ghcsd
 ```
 

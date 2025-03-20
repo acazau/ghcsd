@@ -6,9 +6,9 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/acazau/ghcsd/internal/config"
-	"github.com/acazau/ghcsd/internal/copilot"
-	"github.com/acazau/ghcsd/internal/proxy"
+	"github.com/temp/ghcsd/internal/config"
+	"github.com/temp/ghcsd/internal/copilot"
+	"github.com/temp/ghcsd/internal/proxy"
 )
 
 func main() {

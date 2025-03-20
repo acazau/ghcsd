@@ -1,4 +1,4 @@
-module github.com/acazau/ghcsd
+module github.com/temp/ghcsd
 
 go 1.24
 
