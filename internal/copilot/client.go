@@ -29,15 +29,26 @@ type Client struct {
 
 // NewClient creates a new Copilot client instance
 func NewClient(token string, model string, copilotAPIURL string) (*Client, error) {
+	// Use the provided Copilot API URL or fall back to the default if empty
+	baseURL := copilotAPIURL
+	if baseURL == "" {
+		baseURL = "https://api.githubcopilot.com"
+	}
+
 	return &Client{
 		client:    &http.Client{},
 		token:     token,
 		model:     model,
 		sessionID: generateSessionID(),
 		machineID: generateMachineID(),
-		baseURL:   "https://api.githubcopilot.com",
+		baseURL:   baseURL,
 		debug:     false,
 	}, nil
+}
+
+// SetHTTPClient allows setting a custom HTTP client for testing and mocking
+func (c *Client) SetHTTPClient(client *http.Client) {
+	c.client = client
 }
 
 // generateSessionID creates a unique session identifier

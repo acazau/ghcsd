@@ -12,12 +12,11 @@ import (
 	"time"
 
 	"github.com/temp/ghcsd/internal/config"
-	"github.com/temp/ghcsd/internal/copilot"
 )
 
-// Handler handles requests in Anthropic API format and converts them to Copilot format
+// Handler handles requests in Anthropic API format
 type Handler struct {
-	client       *copilot.Client
+	client       *Client
 	defaultModel string
 	debug        bool
 	// Model mapping configuration
@@ -27,17 +26,19 @@ type Handler struct {
 }
 
 // NewHandler creates a new handler for Anthropic API requests
-func NewHandler(token string, defaultModel string, debug bool) (*Handler, error) {
+func NewHandler(apiKey string, defaultModel string, debug bool) (*Handler, error) {
 	// Validate default model using the config validation function
-	realModelID, valid := config.ValidateModel(defaultModel)
+	_, valid := config.ValidateModel(defaultModel)
 	if !valid {
 		return nil, fmt.Errorf("invalid default model: %s", defaultModel)
 	}
 
-	client, err := copilot.NewClient(token, realModelID, "")
+	// Create a new Anthropic client
+	client, err := NewClient(apiKey, "")
 	if err != nil {
 		return nil, err
 	}
+
 	client.SetDebug(debug)
 
 	// Get model mapping configuration from environment variables
@@ -70,8 +71,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.logRequest("Anthropic Request", r)
 	}
 
-	// Normalize the path by trimming prefix
-	path := strings.TrimPrefix(r.URL.Path, "/anthropic")
+	basePath := "/anthropic"
+	path := strings.TrimPrefix(r.URL.Path, basePath)
 
 	// Handle health check endpoint
 	if r.Method == http.MethodGet && path == "/health" {
@@ -115,7 +116,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use the mapped model
+	// Update the model in the request
 	req.Model = modelToUse
 
 	// Log request beautifully
@@ -130,26 +131,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create a new client instance with the selected model
-	client, err := copilot.NewClient(h.client.GetToken(), realModelID, "")
-	if err != nil {
-		h.sendError(w, "Failed to create client", http.StatusInternalServerError)
-		return
-	}
-	client.SetDebug(h.debug)
-
-	// Convert Anthropic messages to Copilot format
-	copilotMessages, err := h.convertAnthropicToCopilotMessages(req)
-	if err != nil {
-		h.sendError(w, fmt.Sprintf("Failed to convert messages: %v", err), http.StatusBadRequest)
-		return
-	}
+	// We have the model ID now, we'll use it in the request
+	req.Model = realModelID
 
 	var responseBody io.ReadCloser
 	startTime := time.Now()
 
 	if req.Stream {
-		responseBody, err = client.CompleteStream(r.Context(), copilotMessages)
+		// Handle streaming request
+		responseBody, err = h.client.CompleteStream(r.Context(), req)
 		if err != nil {
 			h.logWithPrefix("Error", fmt.Sprintf("Streaming completion failed: %v", err))
 			h.sendError(w, err.Error(), http.StatusInternalServerError)
@@ -161,10 +151,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
 
+		// Set up stream processor
 		streamProcessor := &StreamProcessor{
 			debug:   h.debug,
 			handler: h,
-			model:   req.Model, // Use original model in response
+			model:   modelToUse, // Use the original mapped model in the response
 			flusher: w.(http.Flusher),
 			writer:  w,
 		}
@@ -174,18 +165,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		// Handle non-streaming response
-		resp, err := client.Complete(r.Context(), copilotMessages)
+		// Handle non-streaming request
+		resp, err := h.client.Complete(r.Context(), req)
 		if err != nil {
 			h.logWithPrefix("Error", fmt.Sprintf("Completion failed: %v", err))
 			h.sendError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		// Convert Copilot response to Anthropic format
-		anthropicResp := h.convertCopilotToAnthropicResponse(resp, req.Model) // Use original model in response
-
-		respBytes, err := json.Marshal(anthropicResp)
+		// Simply pass through the response since we're already using the Anthropic format
+		respBytes, err := json.Marshal(resp)
 		if err != nil {
 			h.sendError(w, "Failed to marshal response", http.StatusInternalServerError)
 			return
@@ -207,7 +196,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// mapModel performs model mapping similar to the Python implementation
+// mapModel performs model mapping based on configured rules
 func (h *Handler) mapModel(model string) (string, error) {
 	if model == "" {
 		return h.defaultModel, nil
@@ -217,9 +206,7 @@ func (h *Handler) mapModel(model string) (string, error) {
 	originalModel := model
 
 	// Handle models with provider prefixes
-	if strings.HasPrefix(model, "anthropic/") {
-		model = model[len("anthropic/"):]
-	}
+	model = strings.TrimPrefix(model, "anthropic/")
 
 	// If using OpenAI models, map accordingly
 	if h.useOpenAIModels {
@@ -261,7 +248,7 @@ func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// handleTokenCount implements token counting endpoint similar to the Python version
+// handleTokenCount implements token counting endpoint
 func (h *Handler) handleTokenCount(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -287,28 +274,24 @@ func (h *Handler) handleTokenCount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Convert the request to a format similar to the message request
-	anthropicReq := Request{
-		Model:     modelToUse,
-		Messages:  req.Messages,
-		System:    req.System,
-		Tools:     req.Tools,
-		MaxTokens: 100, // Arbitrary value, not used for counting
-	}
+	// Update the model in the request
+	req.Model = modelToUse
 
-	// Convert Anthropic messages to Copilot format
-	copilotMessages, err := h.convertAnthropicToCopilotMessages(anthropicReq)
-	if err != nil {
-		h.sendError(w, fmt.Sprintf("Failed to convert messages: %v", err), http.StatusBadRequest)
+	// Get the real model ID
+	realModelID, valid := config.ValidateModel(modelToUse)
+	if !valid {
+		h.sendError(w, fmt.Sprintf("Invalid model requested: %s (mapped from %s)", modelToUse, req.Model), http.StatusBadRequest)
 		return
 	}
 
-	// Calculate approximate token count based on the messages
-	inputTokens := h.estimateTokenCount(copilotMessages)
+	// Use the real model ID in the request
+	req.Model = realModelID
 
-	// Create token count response
-	response := TokenCountResponse{
-		InputTokens: inputTokens,
+	// Call the token counting API
+	tokenCount, err := h.client.CountTokens(r.Context(), req)
+	if err != nil {
+		h.sendError(w, fmt.Sprintf("Failed to count tokens: %v", err), http.StatusInternalServerError)
+		return
 	}
 
 	// Respond with token count
@@ -317,9 +300,64 @@ func (h *Handler) handleTokenCount(w http.ResponseWriter, r *http.Request) {
 
 	// Log the response if in debug mode
 	if h.debug {
-		respBytes, _ := json.Marshal(response)
+		respBytes, _ := json.Marshal(tokenCount)
 		h.logWithPrefix("Token Count Response", string(respBytes))
 	}
 
+	json.NewEncoder(w).Encode(tokenCount)
+}
+
+// logRequest logs the full details of an incoming request
+func (h *Handler) logRequest(prefix string, r *http.Request) {
+	fmt.Printf("[%s] %s %s\n", prefix, r.Method, r.URL.Path)
+	for name, values := range r.Header {
+		for _, value := range values {
+			fmt.Printf("[%s] %s: %s\n", prefix, name, value)
+		}
+	}
+}
+
+// logWithPrefix logs a message with a prefix for better readability
+func (h *Handler) logWithPrefix(prefix string, message string) {
+	fmt.Printf("[%s] %s\n", prefix, message)
+}
+
+// logRequestBeautifully logs a request in an easily readable format
+func (h *Handler) logRequestBeautifully(method string, path string, originalModel string, mappedModel string, messageCount int, toolCount int, statusCode int) {
+	if !h.debug {
+		return
+	}
+
+	var modelInfo string
+	if originalModel != mappedModel {
+		modelInfo = fmt.Sprintf("%s → %s", originalModel, mappedModel)
+	} else {
+		modelInfo = originalModel
+	}
+
+	toolInfo := ""
+	if toolCount > 0 {
+		toolInfo = fmt.Sprintf(" with %d tools", toolCount)
+	}
+
+	fmt.Printf("[Request] %s %s | Model: %s | %d messages%s | Status: %d\n",
+		method, path, modelInfo, messageCount, toolInfo, statusCode)
+}
+
+// sendError sends a formatted error response
+func (h *Handler) sendError(w http.ResponseWriter, message string, statusCode int) {
+	response := map[string]interface{}{
+		"error": map[string]interface{}{
+			"type":    "invalid_request_error",
+			"message": message,
+		},
+	}
+
+	if h.debug {
+		h.logWithPrefix("Error", fmt.Sprintf("%d: %s", statusCode, message))
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
 	json.NewEncoder(w).Encode(response)
 }

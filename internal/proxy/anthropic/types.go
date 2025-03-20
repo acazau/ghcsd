@@ -120,17 +120,3 @@ type Colors struct {
 	Underline string
 	Dim       string
 }
-
-// ANSI color codes
-var colors = Colors{
-	Cyan:      "\033[96m",
-	Blue:      "\033[94m",
-	Green:     "\033[92m",
-	Yellow:    "\033[93m",
-	Red:       "\033[91m",
-	Magenta:   "\033[95m",
-	Reset:     "\033[0m",
-	Bold:      "\033[1m",
-	Underline: "\033[4m",
-	Dim:       "\033[2m",
-}

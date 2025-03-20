@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
-	"github.com/google/uuid"
 	"github.com/temp/ghcsd/internal/copilot"
 )
 
@@ -23,258 +23,207 @@ type StreamProcessor struct {
 }
 
 // ProcessStream converts Copilot streaming format to Anthropic streaming format
+// or passes through native Anthropic format events
 func (p *StreamProcessor) ProcessStream(responseBody io.ReadCloser) error {
 	defer responseBody.Close()
-	messageID := fmt.Sprintf("msg_%s", uuid.New().String())
 
-	// Start the message
-	messageStart := map[string]interface{}{
-		"type": "message_start",
-		"message": map[string]interface{}{
-			"id":          messageID,
-			"type":        "message",
-			"role":        "assistant",
-			"model":       p.model,
-			"content":     []interface{}{},
-			"stop_reason": nil,
-			"usage": map[string]int{
-				"input_tokens":  0,
-				"output_tokens": 0,
-			},
-		},
-	}
-	if err := p.sendEvent("message_start", messageStart); err != nil {
-		return err
-	}
+	reader := bufio.NewReader(responseBody)
+	var isAnthropicFormat bool
+	var firstLine string
 
-	// Start the first content block (text)
-	contentBlockStart := map[string]interface{}{
-		"type":  "content_block_start",
-		"index": 0,
-		"content_block": map[string]interface{}{
-			"type": "text",
-			"text": "",
-		},
-	}
-	if err := p.sendEvent("content_block_start", contentBlockStart); err != nil {
-		return err
-	}
-
-	// Send a ping to keep the connection alive
-	ping := map[string]interface{}{
-		"type": "ping",
-	}
-	if err := p.sendEvent("ping", ping); err != nil {
-		return err
-	}
-
-	buffer := bufio.NewReader(responseBody)
-
-	// Track state for better streaming
-	toolIndex := -1
-	accumulatedText := ""
-	textSent := false
-	textBlockClosed := false
-	outputTokens := 0
-	hasSentStopReason := false
-	lastToolIndex := 0
-
+	// Read the first line to determine the format
 	for {
-		line, err := buffer.ReadBytes('\n')
+		line, err := reader.ReadString('\n')
 		if err != nil {
-			if err != io.EOF {
-				return fmt.Errorf("error reading stream: %v", err)
+			if err == io.EOF {
+				return nil // Empty response
 			}
-			break
+			return fmt.Errorf("error reading stream: %v", err)
 		}
-		line = bytes.TrimSpace(line)
+
+		line = strings.TrimSpace(line)
 		if len(line) == 0 {
 			continue
 		}
 
 		// Parse SSE data format
-		if bytes.HasPrefix(line, []byte("data: ")) {
-			line = bytes.TrimPrefix(line, []byte("data: "))
-			if bytes.Equal(line, []byte("[DONE]")) {
+		if strings.HasPrefix(line, "data: ") {
+			data := bytes.TrimPrefix([]byte(line), []byte("data: "))
+			if bytes.Equal(data, []byte("[DONE]")) {
 				// End of stream
-				break
+				fmt.Fprint(p.writer, "data: [DONE]\n\n")
+				p.flusher.Flush()
+				return nil
 			}
 
-			var completionResp copilot.CompletionResponse
-			if err := json.Unmarshal(line, &completionResp); err != nil {
-				p.handler.logWithPrefix("Error", fmt.Sprintf("Failed to parse stream chunk: %v", err))
-				continue
-			}
-
-			// Extract usage info if available
-			if completionResp.Usage.PromptTokens > 0 {
-				outputTokens = completionResp.Usage.PromptTokens
-			}
-			if completionResp.Usage.CompletionTokens > 0 {
-				outputTokens = completionResp.Usage.CompletionTokens
-			}
-
-			if len(completionResp.Choices) > 0 {
-				choice := completionResp.Choices[0]
-
-				// Get delta content
-				deltaContent := ""
-				if choice.Delta.Content != nil {
-					if str, ok := choice.Delta.Content.(string); ok {
-						deltaContent = str
-					}
-				}
-
-				// Accumulate text content
-				if deltaContent != "" {
-					accumulatedText += deltaContent
-					// Send text deltas if no tool calls have started
-					if toolIndex == -1 && !textBlockClosed {
-						textSent = true
-						if err := p.sendEvent("content_block_delta", map[string]interface{}{
-							"type":  "content_block_delta",
-							"index": 0,
-							"delta": map[string]interface{}{
-								"type": "text_delta",
-								"text": deltaContent,
-							},
-						}); err != nil {
-							return err
-						}
-					}
-				}
-
-				// Handle tool calls - currently not part of Copilot API but implemented for future compatibility
-
-				// Check if this is the final message
-				if choice.FinishReason != "" && !hasSentStopReason {
-					hasSentStopReason = true
-
-					// Close any open tool blocks
-					if toolIndex != -1 {
-						for i := 1; i <= lastToolIndex; i++ {
-							if err := p.sendEvent("content_block_stop", map[string]interface{}{
-								"type":  "content_block_stop",
-								"index": i,
-							}); err != nil {
-								return err
-							}
-						}
-					}
-
-					// If we accumulated text but never sent or closed text block, do it now
-					if !textBlockClosed {
-						if accumulatedText != "" && !textSent {
-							// Send the accumulated text
-							if err := p.sendEvent("content_block_delta", map[string]interface{}{
-								"type":  "content_block_delta",
-								"index": 0,
-								"delta": map[string]interface{}{
-									"type": "text_delta",
-									"text": accumulatedText,
-								},
-							}); err != nil {
-								return err
-							}
-						}
-
-						// Close the text block
-						if err := p.sendEvent("content_block_stop", map[string]interface{}{
-							"type":  "content_block_stop",
-							"index": 0,
-						}); err != nil {
-							return err
-						}
-						textBlockClosed = true
-					}
-
-					// Map finish reason to stop reason
-					stopReason := "end_turn"
-					if choice.FinishReason == "length" {
-						stopReason = "max_tokens"
-					} else if choice.FinishReason == "tool_calls" {
-						stopReason = "tool_use"
-					}
-
-					// Send message_delta with stop reason
-					if err := p.sendEvent("message_delta", map[string]interface{}{
-						"type": "message_delta",
-						"delta": map[string]interface{}{
-							"stop_reason":   stopReason,
-							"stop_sequence": nil,
-						},
-						"usage": map[string]int{
-							"output_tokens": outputTokens,
-						},
-					}); err != nil {
-						return err
-					}
-
-					// Send message_stop event
-					if err := p.sendEvent("message_stop", map[string]interface{}{
-						"type": "message_stop",
-					}); err != nil {
-						return err
-					}
-
-					// Send final [DONE] marker
-					fmt.Fprint(p.writer, "data: [DONE]\n\n")
-					p.flusher.Flush()
+			// Try to parse as Anthropic format first
+			var event map[string]interface{}
+			if err := json.Unmarshal(data, &event); err == nil {
+				if _, ok := event["type"].(string); ok {
+					// This is Anthropic format - just pass it through
+					isAnthropicFormat = true
+					firstLine = line
 					break
 				}
 			}
+
+			// Not Anthropic format, must be Copilot format
+			isAnthropicFormat = false
+			firstLine = line
+			break
 		}
 	}
 
-	// If we didn't get a finish reason, close any open blocks
-	if !hasSentStopReason {
-		// Close any open tool call blocks
-		if toolIndex != -1 {
-			for i := 1; i <= lastToolIndex; i++ {
-				if err := p.sendEvent("content_block_stop", map[string]interface{}{
-					"type":  "content_block_stop",
-					"index": i,
-				}); err != nil {
-					return err
+	// Process the first line we already read
+	if err := p.processLine(firstLine, isAnthropicFormat); err != nil {
+		return err
+	}
+
+	// Process the rest of the stream
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return fmt.Errorf("error reading stream: %v", err)
+		}
+
+		line = strings.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+
+		if err := p.processLine(line, isAnthropicFormat); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// processLine handles a single line of SSE data
+func (p *StreamProcessor) processLine(line string, isAnthropicFormat bool) error {
+	// Parse SSE data format
+	if !strings.HasPrefix(line, "data: ") {
+		return nil // Not SSE data
+	}
+
+	data := bytes.TrimPrefix([]byte(line), []byte("data: "))
+	if bytes.Equal(data, []byte("[DONE]")) {
+		// End of stream
+		fmt.Fprint(p.writer, "data: [DONE]\n\n")
+		p.flusher.Flush()
+		return nil
+	}
+
+	if isAnthropicFormat {
+		// Direct pass-through of Anthropic format
+		fmt.Fprintf(p.writer, "%s\n\n", line)
+		p.flusher.Flush()
+
+		// Log if in debug mode
+		if p.debug {
+			var event map[string]interface{}
+			if err := json.Unmarshal(bytes.TrimPrefix(data, []byte("data: ")), &event); err == nil {
+				if eventType, ok := event["type"].(string); ok {
+					p.handler.logWithPrefix("Stream Event", fmt.Sprintf("%s: %s", eventType, string(data)))
 				}
 			}
 		}
+		return nil
+	}
 
-		// Close the text content block
-		if !textBlockClosed {
-			if err := p.sendEvent("content_block_stop", map[string]interface{}{
-				"type":  "content_block_stop",
+	// Handle Copilot format
+	return p.processCopilotFormat(data)
+}
+
+// processCopilotFormat processes data in Copilot format and converts it to Anthropic format
+func (p *StreamProcessor) processCopilotFormat(data []byte) error {
+	var completionResp copilot.CompletionResponse
+
+	if err := json.Unmarshal(data, &completionResp); err != nil {
+		p.handler.logWithPrefix("Error", fmt.Sprintf("Failed to parse stream chunk: %v", err))
+		return nil // Skip this chunk
+	}
+
+	// Extract usage info if available
+	outputTokens := 0
+	if completionResp.Usage.PromptTokens > 0 {
+		outputTokens = completionResp.Usage.PromptTokens
+	}
+	if completionResp.Usage.CompletionTokens > 0 {
+		outputTokens = completionResp.Usage.CompletionTokens
+	}
+
+	if len(completionResp.Choices) > 0 {
+		choice := completionResp.Choices[0]
+
+		// Get delta content
+		deltaContent := ""
+		if choice.Delta.Content != nil {
+			if str, ok := choice.Delta.Content.(string); ok {
+				deltaContent = str
+			}
+		}
+
+		// Send text delta if there's content
+		if deltaContent != "" {
+			textDelta := map[string]interface{}{
+				"type":  "content_block_delta",
 				"index": 0,
-			}); err != nil {
+				"delta": map[string]interface{}{
+					"type": "text_delta",
+					"text": deltaContent,
+				},
+			}
+			if err := p.sendEvent("content_block_delta", textDelta); err != nil {
 				return err
 			}
-			textBlockClosed = true
 		}
 
-		// Send final message_delta with usage
-		if err := p.sendEvent("message_delta", map[string]interface{}{
-			"type": "message_delta",
-			"delta": map[string]interface{}{
-				"stop_reason":   "end_turn",
-				"stop_sequence": nil,
-			},
-			"usage": map[string]int{
-				"output_tokens": outputTokens,
-			},
-		}); err != nil {
-			return err
-		}
+		// Handle finish reason
+		if choice.FinishReason != "" {
+			// Close the text block
+			contentBlockStop := map[string]interface{}{
+				"type":  "content_block_stop",
+				"index": 0,
+			}
+			if err := p.sendEvent("content_block_stop", contentBlockStop); err != nil {
+				return err
+			}
 
-		// Send message_stop event
-		if err := p.sendEvent("message_stop", map[string]interface{}{
-			"type": "message_stop",
-		}); err != nil {
-			return err
-		}
+			// Map finish reason to stop reason
+			stopReason := "end_turn"
+			if choice.FinishReason == "length" {
+				stopReason = "max_tokens"
+			} else if choice.FinishReason == "tool_calls" {
+				stopReason = "tool_use"
+			}
 
-		// Send final [DONE] marker
-		fmt.Fprint(p.writer, "data: [DONE]\n\n")
-		p.flusher.Flush()
+			// Send message_delta with stop reason
+			messageDelta := map[string]interface{}{
+				"type": "message_delta",
+				"delta": map[string]interface{}{
+					"stop_reason":   stopReason,
+					"stop_sequence": nil,
+				},
+				"usage": map[string]int{
+					"output_tokens": outputTokens,
+				},
+			}
+			if err := p.sendEvent("message_delta", messageDelta); err != nil {
+				return err
+			}
+
+			// Send message_stop event
+			messageStop := map[string]interface{}{
+				"type": "message_stop",
+			}
+			if err := p.sendEvent("message_stop", messageStop); err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil
