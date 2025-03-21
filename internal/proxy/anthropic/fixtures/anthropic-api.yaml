@@ -1,10 +1,3 @@
-#!/bin/bash
-
-cd "$(dirname "$0")/.."
-SPEC_PATH="internal/proxy/anthropic/fixtures/anthropic-api.yaml"
-
-# Write OpenAPI spec with evaluated paths
-cat > "$SPEC_PATH" << EOF
 openapi: 3.1.0
 info:
   title: Anthropic API
@@ -59,27 +52,27 @@ paths:
           content:
             application/json:
               schema:
-                \$ref: "#/components/schemas/Message"
+                $ref: "#/components/schemas/Message"
               examples:
                 simple:
                   value:
-                    \$ref: "./test_responses.json#/simple"
+                    $ref: "./test_responses.json#/simple"
                 calculator:
                   value:
-                    \$ref: "./test_responses.json#/calculator"
+                    $ref: "./test_responses.json#/calculator"
                 multi_turn:
                   value:
-                    \$ref: "./test_responses.json#/multi_turn"
+                    $ref: "./test_responses.json#/multi_turn"
             text/event-stream:
               schema:
                 type: string
               examples:
                 simple_stream:
                   value:
-                    \$ref: "./streaming_responses.json#/simple_stream"
+                    $ref: "./streaming_responses.json#/simple_stream"
                 calculator_stream:
                   value:
-                    \$ref: "./streaming_responses.json#/calculator_stream"
+                    $ref: "./streaming_responses.json#/calculator_stream"
   /v1/messages/count_tokens:
     post:
       summary: Count tokens in a message
@@ -103,13 +96,13 @@ paths:
               examples:
                 simple_text:
                   value:
-                    \$ref: "./token_count_responses.json#/simple_text"
+                    $ref: "./token_count_responses.json#/simple_text"
                 with_system:
                   value:
-                    \$ref: "./token_count_responses.json#/with_system"
+                    $ref: "./token_count_responses.json#/with_system"
                 with_tools:
                   value:
-                    \$ref: "./token_count_responses.json#/with_tools"
+                    $ref: "./token_count_responses.json#/with_tools"
 components:
   schemas:
     Message:
@@ -167,38 +160,3 @@ components:
         - role
         - content
         - stop_reason
-EOF
-
-# Check if prism is installed
-if ! command -v prism &> /dev/null; then
-    echo "Error: Prism is not installed. Please install it first:"
-    echo "npm install -g @stoplight/prism-cli"
-    exit 1
-fi
-
-# Export the mock server URL for tests to use
-export MOCK_SERVER_URL="http://127.0.0.1:4010"
-
-echo "Starting Prism mock server on $MOCK_SERVER_URL"
-echo "API spec location: $SPEC_PATH"
-
-# Start Prism mock server with host binding to all interfaces and dynamic mocking
-prism mock --host 0.0.0.0 -p 4010 "$SPEC_PATH" --dynamic &
-
-# Wait for the server to start
-echo "Waiting for mock server to start..."
-sleep 2
-
-# Check if server is running
-if curl -s -f "$MOCK_SERVER_URL/anthropic/health" > /dev/null 2>&1; then
-    echo "Mock server is running"
-else
-    echo "Failed to start mock server"
-    exit 1
-fi
-
-# Clean up on script exit
-trap "kill %1" EXIT
-
-# Keep script running
-wait
