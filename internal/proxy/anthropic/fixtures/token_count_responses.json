@@ -1,0 +1,11 @@
+{
+    "simple_text": {
+        "input_tokens": 15
+    },
+    "with_system": {
+        "input_tokens": 25
+    },
+    "with_tools": {
+        "input_tokens": 35
+    }
+}

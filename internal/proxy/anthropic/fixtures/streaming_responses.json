@@ -1,0 +1,33 @@
+{
+    "simple_stream": [
+        {"type": "message_start", "message": {"id": "msg_126", "type": "message", "role": "assistant"}},
+        {"type": "content_block_start", "index": 0, "content_block": {"type": "text"}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "1"}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "\n"}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "2"}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "\n"}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "3"}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "\n"}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "4"}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "\n"}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "5"}},
+        {"type": "content_block_stop", "index": 0},
+        {"type": "message_delta", "delta": {"stop_reason": "end_turn"}},
+        {"type": "message_stop"}
+    ],
+    "calculator_stream": [
+        {"type": "message_start", "message": {"id": "msg_127", "type": "message", "role": "assistant"}},
+        {"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use"}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "tool_calls", "tool_calls": [{"id": "call_3", "type": "calculator", "calculator": {"expression": "135 + (17.5 / 2.5)"}}]}},
+        {"type": "content_block_stop", "index": 0},
+        {"type": "content_block_start", "index": 1, "content_block": {"type": "text"}},
+        {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "Let me calculate that for you:\n\n"}},
+        {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "135 + (17.5 ÷ 2.5) = "}},
+        {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "135 + 7 = "}},
+        {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "142\n\n"}},
+        {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "The result is 142."}},
+        {"type": "content_block_stop", "index": 1},
+        {"type": "message_delta", "delta": {"stop_reason": "end_turn"}},
+        {"type": "message_stop"}
+    ]
+}

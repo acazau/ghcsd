@@ -15,215 +15,66 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/joho/godotenv"
 )
 
-// prismMockServer manages the Prism mock server instance
-type prismMockServer struct {
-	serverURL string
-	apiSpec   string
+func init() {
+	// Try various possible locations for the .env file
+	paths := []string{
+		"../../../../.env", // from test file location
+		"../../../.env",    // one level up
+		"../../.env",       // two levels up
+		"../.env",          // three levels up
+		".env",             // current directory
+	}
+
+	loaded := false
+	for _, path := range paths {
+		if err := godotenv.Load(path); err == nil {
+			loaded = true
+			break
+		}
+	}
+
+	if !loaded {
+		fmt.Println("Warning: Could not load .env file from any location")
+	}
 }
 
-// setupPrismMock starts a Prism mock server with the given OpenAPI spec
-func setupPrismMock(t *testing.T) *prismMockServer {
-	// Create a temporary directory for the OpenAPI spec
-	tempDir, err := os.MkdirTemp("", "prism-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %v", err)
+// getMockServerURL returns the URL of the mock server from environment variable
+func getMockServerURL() (string, error) {
+	mockURL := os.Getenv("MOCK_SERVER_URL")
+	if mockURL == "" {
+		return "", fmt.Errorf("MOCK_SERVER_URL environment variable not set in .env file")
 	}
-
-	// Create OpenAPI spec file for Anthropic API
-	specPath := filepath.Join(tempDir, "anthropic-api.yaml")
-	println(specPath)
-	specContent := `
-openapi: 3.1.0
-info:
-  title: Anthropic API
-  version: 1.0.0
-servers:
-  - url: https://api.anthropic.com
-paths:
-  /v1/messages:
-    post:
-      summary: Create a message
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-      responses:
-        '200':
-          description: Successful response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  id:
-                    type: string
-                  type:
-                    type: string
-                  role:
-                    type: string
-                  content:
-                    type: array
-            text/event-stream:
-              schema:
-                type: string
-  /v1/messages/count_tokens:
-    post:
-      summary: Count tokens in a message
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-      responses:
-        '200':
-          description: Successful response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  input_tokens:
-                    type: integer
-`
-	if err := os.WriteFile(specPath, []byte(specContent), 0644); err != nil {
-		t.Fatalf("Failed to write OpenAPI spec: %v", err)
-	}
-
-	// Start Prism server (mock implementation for testing)
-	// Note: In a real environment, you'd need Prism installed
-	// Here we're simulating its behavior with an HTTP test server
-	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Validate the auth header - but in our mock, we'll accept any token format
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			http.Error(w, "Missing Authorization header", http.StatusUnauthorized)
-			return
-		}
-
-		// We'll accept any token format for testing
-		if !strings.HasPrefix(authHeader, "Bearer ") {
-			http.Error(w, "Authorization header must start with Bearer", http.StatusUnauthorized)
-			return
-		}
-
-		if r.URL.Path == "/v1/messages" {
-			// Read request body
-			var req map[string]interface{}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "Invalid request", http.StatusBadRequest)
-				return
-			}
-
-			// Check for stream parameter
-			stream, ok := req["stream"].(bool)
-
-			if stream && ok {
-				// Handle streaming response
-				w.Header().Set("Content-Type", "text/event-stream")
-
-				// Simulate Anthropic streaming responses
-				events := []string{
-					`{"type":"message_start","message":{"id":"msg_mock","type":"message","role":"assistant","content":[],"model":"claude-3-opus-20240229","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0}}}`,
-					`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
-					`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"This"}}`,
-					`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is"}}`,
-					`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a"}}`,
-					`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" mock"}}`,
-					`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" stream"}}`,
-					`{"type":"content_block_stop","index":0}`,
-					`{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"usage":{"output_tokens":5}}}`,
-					`{"type":"message_stop"}`,
-				}
-
-				flusher, ok := w.(http.Flusher)
-				if !ok {
-					http.Error(w, "Streaming not supported", http.StatusInternalServerError)
-					return
-				}
-
-				for _, event := range events {
-					fmt.Fprintf(w, "data: %s\n\n", event)
-					flusher.Flush()
-					time.Sleep(5 * time.Millisecond) // Simulate delay
-				}
-
-				fmt.Fprintf(w, "data: [DONE]\n\n")
-				flusher.Flush()
-			} else {
-				// Handle non-streaming response
-				w.Header().Set("Content-Type", "application/json")
-
-				// Anthropic format response
-				response := map[string]interface{}{
-					"id":   "msg_mock",
-					"type": "message",
-					"role": "assistant",
-					"content": []map[string]interface{}{
-						{
-							"type": "text",
-							"text": "This is a mock response",
-						},
-					},
-					"model":         "claude-3-opus-20240229",
-					"stop_reason":   "end_turn",
-					"stop_sequence": nil,
-					"usage": map[string]interface{}{
-						"input_tokens":  10,
-						"output_tokens": 5,
-					},
-				}
-
-				json.NewEncoder(w).Encode(response)
-			}
-		} else if r.URL.Path == "/v1/messages/count_tokens" {
-			w.Header().Set("Content-Type", "application/json")
-
-			tokenResponse := map[string]interface{}{
-				"input_tokens": 15, // Mock token count
-			}
-
-			json.NewEncoder(w).Encode(tokenResponse)
-		} else if strings.HasPrefix(r.URL.Path, "/anthropic/health") {
-			w.Header().Set("Content-Type", "application/json")
-			response := map[string]interface{}{
-				"status":  "ok",
-				"message": "Anthropic API proxy is healthy",
-			}
-			json.NewEncoder(w).Encode(response)
-		} else {
-			http.NotFound(w, r)
-		}
-	}))
-
-	return &prismMockServer{
-		serverURL: mockServer.URL,
-		apiSpec:   specPath,
-	}
+	return mockURL, nil
 }
 
 // setupTestServer creates a test server with a client using the Prism mock
 func setupTestServer(t *testing.T) (*httptest.Server, *Handler) {
-	// Set up Prism mock server
-	prismMock := setupPrismMock(t)
+	mockURL, err := getMockServerURL()
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	// Create a custom HTTP client that redirects all requests to our mock server
 	mockClient := &http.Client{
 		Transport: &mockTransport{
-			mockURL: prismMock.serverURL,
+			mockURL: mockURL,
 		},
 	}
+
 	// Create real client but point it to our mock server
-	client, err := NewClient("mock-token", prismMock.serverURL)
+	client, err := NewClient("mock-token", mockURL)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
+
 	// Replace the internal HTTP client with our custom mock client
 	client.SetHTTPClient(mockClient)
 	client.SetDebug(true)
+
 	handler := &Handler{
 		client:          client,
 		defaultModel:    "gpt-4o",
@@ -257,8 +108,30 @@ func (t *mockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		mockReq.Header.Set("Authorization", "Bearer mock-token")
 	}
 
-	// Send the request to our mock server
-	return http.DefaultTransport.RoundTrip(mockReq)
+	// Create a client with timeouts
+	client := &http.Client{
+		Transport: &http.Transport{
+			ResponseHeaderTimeout: 5 * time.Second,
+			IdleConnTimeout:       5 * time.Second,
+			DisableKeepAlives:     true,
+		},
+		Timeout: 10 * time.Second,
+	}
+
+	// Implement retry logic
+	maxRetries := 3
+	var lastErr error
+	for i := 0; i < maxRetries; i++ {
+		if i > 0 {
+			time.Sleep(time.Duration(i) * time.Second)
+		}
+		resp, err := client.Do(mockReq)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+	}
+	return nil, fmt.Errorf("after %d retries: %v", maxRetries, lastErr)
 }
 
 // TestScenario represents a test case configuration
