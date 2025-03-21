@@ -1,0 +1,43 @@
+{
+    "simple_stream": {
+        "name": "Simple streaming response",
+        "model": "gpt-4o",
+        "maxTokens": 100,
+        "stream": true,
+        "messages": [
+            {
+                "role": "user",
+                "content": "Count from 1 to 5, with one number per line."
+            }
+        ]
+    },
+    "calculator_stream": {
+        "name": "Calculator with streaming",
+        "model": "gpt-4o",
+        "maxTokens": 300,
+        "stream": true,
+        "messages": [
+            {
+                "role": "user",
+                "content": "What is 135 + 17.5 divided by 2.5?"
+            }
+        ],
+        "tools": [
+            {
+                "name": "calculator",
+                "description": "Evaluate mathematical expressions",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "expression": {
+                            "type": "string",
+                            "description": "The mathematical expression to evaluate"
+                        }
+                    },
+                    "required": ["expression"]
+                }
+            }
+        ],
+        "toolChoice": {"type": "auto"}
+    }
+}

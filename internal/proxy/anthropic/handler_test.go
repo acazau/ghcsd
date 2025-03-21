@@ -33,6 +33,7 @@ func setupPrismMock(t *testing.T) *prismMockServer {
 
 	// Create OpenAPI spec file for Anthropic API
 	specPath := filepath.Join(tempDir, "anthropic-api.yaml")
+	println(specPath)
 	specContent := `
 openapi: 3.1.0
 info:
@@ -262,141 +263,32 @@ func (t *mockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 // TestScenario represents a test case configuration
 type TestScenario struct {
-	name       string
-	model      string
-	maxTokens  int
-	messages   []Message
-	tools      []Tool
-	toolChoice *ToolChoice
-	system     string
-	stream     bool
+	Name       string      `json:"name"`
+	Model      string      `json:"model"`
+	MaxTokens  int         `json:"maxTokens"`
+	Messages   []Message   `json:"messages"`
+	Tools      []Tool      `json:"tools,omitempty"`
+	ToolChoice *ToolChoice `json:"toolChoice,omitempty"`
+	System     string      `json:"system,omitempty"`
+	Stream     bool        `json:"stream,omitempty"`
+	WantErr    bool        `json:"wantErr,omitempty"`
+	CheckLen   bool        `json:"checkLen,omitempty"`
 }
 
-// Test scenarios matching the Python implementation
-var testScenarios = map[string]TestScenario{
-	"simple": {
-		name:      "Simple text response",
-		model:     "gpt-4o",
-		maxTokens: 300,
-		messages: []Message{
-			{
-				Role:    "user",
-				Content: "Hello, world! Can you tell me about Paris in 2-3 sentences?",
-			},
-		},
-	},
-	"calculator": {
-		name:      "Basic tool use",
-		model:     "gpt-4o",
-		maxTokens: 300,
-		messages: []Message{
-			{
-				Role:    "user",
-				Content: "What is 135 + 7.5 divided by 2.5?",
-			},
-		},
-		tools: []Tool{
-			{
-				Name:        "calculator",
-				Description: "Evaluate mathematical expressions",
-				InputSchema: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"expression": map[string]interface{}{
-							"type":        "string",
-							"description": "The mathematical expression to evaluate",
-						},
-					},
-					"required": []string{"expression"},
-				},
-			},
-		},
-		toolChoice: &ToolChoice{Type: "auto"},
-	},
-	"multi_turn": {
-		name:      "Multi-turn conversation",
-		model:     "gpt-4o",
-		maxTokens: 500,
-		messages: []Message{
-			{
-				Role:    "user",
-				Content: "Let's do some math. What is 240 divided by 8?",
-			},
-			{
-				Role:    "assistant",
-				Content: "To calculate 240 divided by 8, I'll perform the division:\n\n240 ÷ 8 = 30\n\nSo the result is 30.",
-			},
-			{
-				Role:    "user",
-				Content: "Now multiply that by 4 and tell me the result.",
-			},
-		},
-		tools: []Tool{
-			{
-				Name:        "calculator",
-				Description: "Evaluate mathematical expressions",
-				InputSchema: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"expression": map[string]interface{}{
-							"type":        "string",
-							"description": "The mathematical expression to evaluate",
-						},
-					},
-					"required": []string{"expression"},
-				},
-			},
-		},
-		toolChoice: &ToolChoice{Type: "auto"},
-	},
-	"multi_tool": {
-		name:      "Multiple tools",
-		model:     "gpt-4o",
-		maxTokens: 500,
-		system:    "You are a helpful assistant that uses tools when appropriate. Be concise and precise.",
-		messages: []Message{
-			{
-				Role:    "user",
-				Content: "I'm planning a trip to New York next week. What's the weather like and what are some interesting places to visit?",
-			},
-		},
-		tools: []Tool{
-			{
-				Name:        "weather",
-				Description: "Get weather information for a location",
-				InputSchema: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"location": map[string]interface{}{
-							"type":        "string",
-							"description": "The city or location to get weather for",
-						},
-						"units": map[string]interface{}{
-							"type":        "string",
-							"enum":        []string{"celsius", "fahrenheit"},
-							"description": "Temperature units",
-						},
-					},
-					"required": []string{"location"},
-				},
-			},
-			{
-				Name:        "search",
-				Description: "Search for information on the web",
-				InputSchema: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"query": map[string]interface{}{
-							"type":        "string",
-							"description": "The search query",
-						},
-					},
-					"required": []string{"query"},
-				},
-			},
-		},
-		toolChoice: &ToolChoice{Type: "auto"},
-	},
+// loadTestScenarios loads test scenarios from a JSON file
+func loadTestScenarios(t *testing.T, filename string) map[string]TestScenario {
+	path := filepath.Join("fixtures", filename)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("Failed to read test scenarios file: %v", err)
+	}
+
+	var scenarios map[string]TestScenario
+	if err := json.Unmarshal(data, &scenarios); err != nil {
+		t.Fatalf("Failed to unmarshal test scenarios: %v", err)
+	}
+
+	return scenarios
 }
 
 // compareResponses compares the responses from the handler and validates their structure
@@ -438,7 +330,7 @@ func compareResponses(t *testing.T, response *http.Response, scenario TestScenar
 	}
 
 	// Additional checks for tool usage if tools were provided
-	if len(scenario.tools) > 0 {
+	if len(scenario.Tools) > 0 {
 		hasToolUse := false
 		for _, content := range resp.Content {
 			if content.Type == "tool_use" {
@@ -458,20 +350,20 @@ func TestBasicRequests(t *testing.T) {
 	server, _ := setupTestServer(t)
 	defer server.Close()
 
+	scenarios := loadTestScenarios(t, "test_scenarios.json")
 	client := server.Client()
 
-	for name, scenario := range testScenarios {
+	for name, scenario := range scenarios {
 		t.Run(name, func(t *testing.T) {
-			// Create request body
 			reqBody := Request{
-				Model:     scenario.model,
-				MaxTokens: scenario.maxTokens,
-				Messages:  scenario.messages,
-				Tools:     scenario.tools,
-				System:    scenario.system,
+				Model:     scenario.Model,
+				MaxTokens: scenario.MaxTokens,
+				Messages:  scenario.Messages,
+				Tools:     scenario.Tools,
+				System:    scenario.System,
 			}
-			if scenario.toolChoice != nil {
-				reqBody.ToolChoice = scenario.toolChoice
+			if scenario.ToolChoice != nil {
+				reqBody.ToolChoice = scenario.ToolChoice
 			}
 
 			reqBytes, err := json.Marshal(reqBody)
@@ -668,69 +560,25 @@ func processStream(t *testing.T, resp *http.Response) (*StreamStats, error) {
 	return stats, nil
 }
 
-// streamingTestScenarios defines test scenarios for streaming
-var streamingTestScenarios = map[string]TestScenario{
-	"simple_stream": {
-		name:      "Simple streaming response",
-		model:     "gpt-4o",
-		maxTokens: 100,
-		stream:    true,
-		messages: []Message{
-			{
-				Role:    "user",
-				Content: "Count from 1 to 5, with one number per line.",
-			},
-		},
-	},
-	"calculator_stream": {
-		name:      "Calculator with streaming",
-		model:     "gpt-4o",
-		maxTokens: 300,
-		stream:    true,
-		messages: []Message{
-			{
-				Role:    "user",
-				Content: "What is 135 + 17.5 divided by 2.5?",
-			},
-		},
-		tools: []Tool{
-			{
-				Name:        "calculator",
-				Description: "Evaluate mathematical expressions",
-				InputSchema: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"expression": map[string]interface{}{
-							"type":        "string",
-							"description": "The mathematical expression to evaluate",
-						},
-					},
-					"required": []string{"expression"},
-				},
-			},
-		},
-		toolChoice: &ToolChoice{Type: "auto"},
-	},
-}
-
 // TestStreamingRequests tests streaming requests
 func TestStreamingRequests(t *testing.T) {
 	server, _ := setupTestServer(t)
 	defer server.Close()
 
+	scenarios := loadTestScenarios(t, "streaming_scenarios.json")
 	client := server.Client()
 
-	for name, scenario := range streamingTestScenarios {
+	for name, scenario := range scenarios {
 		t.Run(name, func(t *testing.T) {
 			reqBody := Request{
-				Model:     scenario.model,
-				MaxTokens: scenario.maxTokens,
-				Messages:  scenario.messages,
-				Tools:     scenario.tools,
+				Model:     scenario.Model,
+				MaxTokens: scenario.MaxTokens,
+				Messages:  scenario.Messages,
+				Tools:     scenario.Tools,
 				Stream:    true,
 			}
-			if scenario.toolChoice != nil {
-				reqBody.ToolChoice = scenario.toolChoice
+			if scenario.ToolChoice != nil {
+				reqBody.ToolChoice = scenario.ToolChoice
 			}
 
 			reqBytes, err := json.Marshal(reqBody)
@@ -819,93 +667,45 @@ func TestHealthCheck(t *testing.T) {
 	}
 }
 
+// TokenCountTestScenario represents a test case configuration for token counting
+type TokenCountTestScenario struct {
+	Name     string    `json:"name"`
+	Model    string    `json:"model"`
+	System   string    `json:"system,omitempty"`
+	Messages []Message `json:"messages"`
+	Tools    []Tool    `json:"tools,omitempty"`
+	WantErr  bool      `json:"wantErr"`
+	CheckLen bool      `json:"checkLen"`
+}
+
 // TestTokenCount tests the token counting endpoint
 func TestTokenCount(t *testing.T) {
 	server, _ := setupTestServer(t)
 	defer server.Close()
 
+	scenarios := loadTestScenarios(t, "token_count_scenarios.json")
 	client := server.Client()
 
-	testCases := []struct {
-		name     string
-		request  TokenCountRequest
-		wantErr  bool
-		checkLen bool // whether to check if input_tokens > 0
-	}{
-		{
-			name: "simple text",
-			request: TokenCountRequest{
-				Model: "gpt-4o",
-				Messages: []Message{
-					{
-						Role:    "user",
-						Content: "Hello, how are you?",
-					},
-				},
-			},
-			checkLen: true,
-		},
-		{
-			name: "with system message",
-			request: TokenCountRequest{
-				Model:  "gpt-4o",
-				System: "You are a helpful assistant.",
-				Messages: []Message{
-					{
-						Role:    "user",
-						Content: "What is 2+2?",
-					},
-				},
-			},
-			checkLen: true,
-		},
-		{
-			name: "with tools",
-			request: TokenCountRequest{
-				Model: "gpt-4o",
-				Messages: []Message{
-					{
-						Role:    "user",
-						Content: "Calculate 123 + 456",
-					},
-				},
-				Tools: []Tool{
-					{
-						Name:        "calculator",
-						Description: "Calculate mathematical expressions",
-						InputSchema: map[string]interface{}{
-							"type": "object",
-							"properties": map[string]interface{}{
-								"expression": map[string]interface{}{
-									"type":        "string",
-									"description": "The mathematical expression to evaluate",
-								},
-							},
-							"required": []string{"expression"},
-						},
-					},
-				},
-			},
-			checkLen: true,
-		},
-		{
-			name: "invalid model",
-			request: TokenCountRequest{
-				Model: "invalid-model",
-				Messages: []Message{
-					{
-						Role:    "user",
-						Content: "Hello",
-					},
-				},
-			},
-			wantErr: true,
-		},
-	}
+	for name, scenario := range scenarios {
+		tc := TokenCountTestScenario{
+			Name:     scenario.Name,
+			Model:    scenario.Model,
+			System:   scenario.System,
+			Messages: scenario.Messages,
+			Tools:    scenario.Tools,
+			WantErr:  scenario.WantErr,
+			CheckLen: scenario.CheckLen,
+		}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			reqBytes, err := json.Marshal(tc.request)
+		t.Run(name, func(t *testing.T) {
+			reqBody := TokenCountRequest{
+				Model:    tc.Model,
+				System:   tc.System,
+				Messages: tc.Messages,
+				Tools:    tc.Tools,
+			}
+
+			reqBytes, err := json.Marshal(reqBody)
 			if err != nil {
 				t.Fatalf("Failed to marshal request: %v", err)
 			}
@@ -928,7 +728,7 @@ func TestTokenCount(t *testing.T) {
 			}
 			defer resp.Body.Close()
 
-			if tc.wantErr {
+			if tc.WantErr {
 				if resp.StatusCode == http.StatusOK {
 					t.Error("Expected error response but got 200 OK")
 				}
@@ -945,11 +745,11 @@ func TestTokenCount(t *testing.T) {
 				t.Fatalf("Failed to decode response: %v", err)
 			}
 
-			if tc.checkLen && tokenCount.InputTokens == 0 {
+			if tc.CheckLen && tokenCount.InputTokens == 0 {
 				t.Error("Expected non-zero input tokens")
 			}
 
-			t.Logf("Token count for %s: %d", tc.name, tokenCount.InputTokens)
+			t.Logf("Token count for %s: %d", tc.Name, tokenCount.InputTokens)
 		})
 	}
 }

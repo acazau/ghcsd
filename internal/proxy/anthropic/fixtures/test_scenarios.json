@@ -1,0 +1,77 @@
+{
+    "simple": {
+        "name": "Simple text response",
+        "model": "gpt-4o",
+        "maxTokens": 300,
+        "messages": [
+            {
+                "role": "user",
+                "content": "Hello, world! Can you tell me about Paris in 2-3 sentences?"
+            }
+        ]
+    },
+    "calculator": {
+        "name": "Basic tool use",
+        "model": "gpt-4o",
+        "maxTokens": 300,
+        "messages": [
+            {
+                "role": "user",
+                "content": "What is 135 + 7.5 divided by 2.5?"
+            }
+        ],
+        "tools": [
+            {
+                "name": "calculator",
+                "description": "Evaluate mathematical expressions",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "expression": {
+                            "type": "string",
+                            "description": "The mathematical expression to evaluate"
+                        }
+                    },
+                    "required": ["expression"]
+                }
+            }
+        ],
+        "toolChoice": {"type": "auto"}
+    },
+    "multi_turn": {
+        "name": "Multi-turn conversation",
+        "model": "gpt-4o",
+        "maxTokens": 500,
+        "messages": [
+            {
+                "role": "user",
+                "content": "Let's do some math. What is 240 divided by 8?"
+            },
+            {
+                "role": "assistant",
+                "content": "To calculate 240 divided by 8, I'll perform the division:\n\n240 ÷ 8 = 30\n\nSo the result is 30."
+            },
+            {
+                "role": "user",
+                "content": "Now multiply that by 4 and tell me the result."
+            }
+        ],
+        "tools": [
+            {
+                "name": "calculator",
+                "description": "Evaluate mathematical expressions",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "expression": {
+                            "type": "string",
+                            "description": "The mathematical expression to evaluate"
+                        }
+                    },
+                    "required": ["expression"]
+                }
+            }
+        ],
+        "toolChoice": {"type": "auto"}
+    }
+}
