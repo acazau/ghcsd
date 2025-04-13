@@ -25,9 +25,14 @@ A HTTP server that proxies OpenAI-style API requests to GitHub Copilot by adding
 The following models are supported:
 - `gpt-4` or `4`: Standard GPT-4 model
 - `gpt-4o` or `4o`: Optimized GPT-4 model (default)
-- `o1-mini`: OpenAI's smaller model
-- `o1-preview`: OpenAI's preview model
-- `sonnet` or `claude-3.5-sonnet`: Claude 3.5 Sonnet model
+- `o1`: OpenAI's o1 model
+- `o3-mini`: OpenAI's smaller model
+- `sonnet`: Claude 3.7 Sonnet model
+- `claude-3.5-sonnet`: Claude 3.5 Sonnet model
+- `claude-3.7-sonnet`: Claude 3.7 Sonnet model
+- `claude-3.7-sonnet-thought`: Claude 3.7 Sonnet with thought process
+- `gemini-2.0-flash` or `gemini-flash`: Gemini 2.0 Flash model
+- `gemini-2.5-pro` or `gemini-pro`: Gemini 2.5 Pro model
 
 ## Installation
 

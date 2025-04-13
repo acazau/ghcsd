@@ -28,6 +28,9 @@ var models = []Model{
 	{ID: "claude-3.7-sonnet", RealID: "claude-3.7-sonnet", Provider: "Anthropic"},
 	{ID: "claude-3.7-sonnet-thought", RealID: "claude-3.7-sonnet-thought", Provider: "Anthropic"},
 	{ID: "gemini-2.0-flash", RealID: "gemini-2.0-flash-001", Provider: "Google"},
+	{ID: "gemini-2.5-pro", RealID: "gemini-2.5-pro-preview-03-25", Provider: "Google"},
+	{ID: "gemini-flash", RealID: "gemini-2.0-flash-001", Provider: "Google"},
+	{ID: "gemini-pro", RealID: "gemini-2.5-pro-preview-03-25", Provider: "Google"},
 }
 
 // modelMap provides quick lookups for model validation and mapping
